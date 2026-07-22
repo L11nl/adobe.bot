@@ -21,6 +21,7 @@ dp = Dispatcher()
 # طابور المهام وقائمة البروكسيات
 card_queue = asyncio.Queue()
 proxy_list = []
+proxy_enabled = True # مفتاح تفعيل أو إيقاف البروكسيات
 
 class BotStates(StatesGroup):
     waiting_for_proxies = State()
@@ -56,7 +57,8 @@ async def automate_adobe_checkout(chat_id, data: dict):
         proxy_settings = None
         selected_proxy = None
         
-        if proxy_list:
+        # استخدام البروكسيات فقط إذا كانت مفعلة وتم إضافة بروكسيات
+        if proxy_enabled and proxy_list:
             selected_proxy = random.choice(proxy_list)
             try:
                 credentials, server_address = selected_proxy.split('@')
@@ -68,12 +70,6 @@ async def automate_adobe_checkout(chat_id, data: dict):
                 }
             except Exception as e:
                 print(f"Error parsing proxy {selected_proxy}: {e}")
-        elif os.getenv("PROXY_SERVER"):
-            proxy_settings = {
-                "server": os.getenv("PROXY_SERVER"),
-                "username": os.getenv("PROXY_USERNAME"),
-                "password": os.getenv("PROXY_PASSWORD")
-            }
 
         browser = await p.chromium.launch(
             headless=True,
@@ -175,14 +171,12 @@ async def automate_adobe_checkout(chat_id, data: dict):
         except Exception as e:
             error_msg = str(e).split('\n')[0] 
             
-            # فلترة أخطاء البروكسي
             if "ERR_TUNNEL_CONNECTION_FAILED" in error_msg or "ERR_PROXY_CONNECTION_FAILED" in error_msg:
                 proxy_info = f"\nالبروكسي الميت: `{selected_proxy}`" if selected_proxy else ""
                 custom_error = f"❌ **فشل الاتصال:** البروكسي المستخدم ميت أو لا يعمل.{proxy_info}"
             else:
                 custom_error = f"❌ **فشل تقني:** حدث استثناء أثناء التنفيذ (`{error_msg}`)"
 
-            # محاولة التقاط صورة للخطأ إذا أمكن
             try:
                 await page.screenshot(path=error_img)
                 photo = FSInputFile(error_img)
@@ -190,10 +184,9 @@ async def automate_adobe_checkout(chat_id, data: dict):
                     chat_id, 
                     photo, 
                     caption=f"🎉 النتيجة النهائية للبطاقة {last_4}:\n\n{custom_error}",
-                    parse_mode="Markdown"
+                    parse_Mode="Markdown"
                 )
             except:
-                # إذا فشل حتى التقاط الصورة (بسبب فشل الاتصال التام)
                 await bot.send_message(
                     chat_id, 
                     f"🎉 النتيجة النهائية للبطاقة {last_4}:\n\n{custom_error}",
@@ -220,32 +213,45 @@ async def queue_worker():
 
 @dp.message(Command("start"))
 async def send_welcome(message: Message):
+    # إنشاء الأزرار التفاعلية
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ اضافة بروكسيات", callback_data="add_proxies")]
+        [InlineKeyboardButton(text="➕ اضافة بروكسيات", callback_data="add_proxies")],
+        [InlineKeyboardButton(text="🛑 إيقاف البروكسيات", callback_data="stop_proxies")]
     ])
     
+    status_text = "🟢 **البروكسيات:** مفعلة" if proxy_enabled and proxy_list else "🔴 **البروكسيات:** متوقفة (اتصال محلي)"
+    
     await message.reply(
-        "مرحباً بك.\n"
+        f"مرحباً بك.\n"
+        f"{status_text}\n\n"
         "أرسل لي بيانات الدفع بأي تنسيق وسأقوم بفلترتها وفحصها.\n\n"
         "يمكنك إرسال بطاقة واحدة، أو مجموعة بطاقات (كل بطاقة في سطر).\n\n"
         "أمثلة مدعومة:\n"
         "`4938 7506 7122 3872|0731`\n"
-        "`4938750671223872|07|31|123`\n"
-        "`4938750671223872|07/31|123`",
+        "`4938750671223872|07|31|123`",
         parse_mode="Markdown",
         reply_markup=kb
     )
 
 @dp.callback_query(F.data == "add_proxies")
 async def add_proxies_callback(callback: types.CallbackQuery, state: FSMContext):
+    global proxy_enabled
+    proxy_enabled = True
     await callback.message.answer(
         "أرسل البروكسيات الآن.\n"
-        "يمكنك إرسال بروكسي واحد أو مجموعة مفصولة بمسافة أو في أسطر جديدة.\n\n"
-        "**التنسيق المطلوب:**\n"
+        "التنسيق المطلوب:\n"
         "`username:password@ip:port`", 
         parse_mode="Markdown"
     )
     await state.set_state(BotStates.waiting_for_proxies)
+    await callback.answer()
+
+# زر إيقاف البروكسيات
+@dp.callback_query(F.data == "stop_proxies")
+async def stop_proxies_callback(callback: types.CallbackQuery, state: FSMContext):
+    global proxy_enabled
+    proxy_enabled = False
+    await callback.message.answer("🛑 **تم إيقاف البروكسيات بنجاح.**\nسيعمل البوت الآن محلياً عبر خادم الرايتواي مباشرة.", parse_mode="Markdown")
     await callback.answer()
 
 @dp.message(BotStates.waiting_for_proxies)
@@ -260,7 +266,7 @@ async def receive_proxies(message: Message, state: FSMContext):
             added_count += 1
             
     if added_count > 0:
-        await message.reply(f"✅ تم إضافة **{added_count}** بروكسيات بنجاح!\nإجمالي البروكسيات المتوفرة في البوت الآن: **{len(proxy_list)}**", parse_mode="Markdown")
+        await message.reply(f"✅ تم إضافة **{added_count}** بروكسيات بنجاح وتم تفعيلها!\nإجمالي البروكسيات المتوفرة: **{len(proxy_list)}**", parse_mode="Markdown")
     else:
         await message.reply("⚠️ لم يتم العثور على بروكسيات بالتنسيق الصحيح. تأكد من التنسيق وحاول مجدداً.")
         
