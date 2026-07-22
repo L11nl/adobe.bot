@@ -28,7 +28,7 @@ def generate_random_data():
     lname = random.choice(last_names)
     zip_code = random.choice(zip_codes)
     
-    # توليد إيميل عشوائي بناءً على طلبك
+    # توليد إيميل عشوائي
     random_chars = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
     email = f"nabeel886ADOBEVV44{random_chars}@gmail.com"
     
@@ -72,12 +72,15 @@ async def automate_adobe_checkout(chat_id, data: dict):
         
         try:
             await bot.send_message(chat_id, "🌐 جاري الاتصال ببوابة أدوبي...")
-            await page.goto(ADOBE_URL, wait_until="networkidle")
+            
+            # التعديل الجديد: تحميل الـ DOM فقط والانتظار حتى يظهر حقل الإيميل لتجاوز مشكلة الانتظار
+            await page.goto(ADOBE_URL, wait_until="domcontentloaded", timeout=60000)
+            await page.locator('input[type="email"]').wait_for(state="visible", timeout=30000)
 
             # الخطوة 1: الإيميل
             await page.locator('input[type="email"]').type(data['email'], delay=100)
             await page.locator('button:has-text("Continue")').click()
-            await page.wait_for_timeout(4000)
+            await page.wait_for_timeout(5000)
 
             # دالة لاقتحام الإطارات الأمنية (iframes)
             async def type_in_field(placeholder_text, name_attr, value):
