@@ -22,7 +22,6 @@ dp = Dispatcher()
 card_queue = asyncio.Queue()
 proxy_list = []
 
-# إعداد حالات البوت (FSM) لانتظار إدخال البروكسيات
 class BotStates(StatesGroup):
     waiting_for_proxies = State()
 
@@ -55,12 +54,11 @@ async def automate_adobe_checkout(chat_id, data: dict):
     
     async with async_playwright() as p:
         proxy_settings = None
+        selected_proxy = None
         
-        # استخدام البروكسيات المضافة من الزر إذا كانت متوفرة
         if proxy_list:
             selected_proxy = random.choice(proxy_list)
             try:
-                # تقسيم البروكسي: username:password@ip:port
                 credentials, server_address = selected_proxy.split('@')
                 p_user, p_pass = credentials.split(':')
                 proxy_settings = {
@@ -70,7 +68,6 @@ async def automate_adobe_checkout(chat_id, data: dict):
                 }
             except Exception as e:
                 print(f"Error parsing proxy {selected_proxy}: {e}")
-        # خيار بديل: استخدام متغيرات Railway إذا لم يتم إضافة بروكسيات عبر الزر
         elif os.getenv("PROXY_SERVER"):
             proxy_settings = {
                 "server": os.getenv("PROXY_SERVER"),
@@ -176,16 +173,32 @@ async def automate_adobe_checkout(chat_id, data: dict):
             )
             
         except Exception as e:
-            await page.screenshot(path=error_img)
-            photo = FSInputFile(error_img)
             error_msg = str(e).split('\n')[0] 
             
-            await bot.send_photo(
-                chat_id, 
-                photo, 
-                caption=f"🎉 النتيجة النهائية للبطاقة {last_4}:\n\n❌ **فشل تقني:** حدث استثناء أثناء التنفيذ (`{error_msg}`)",
-                parse_mode="Markdown"
-            )
+            # فلترة أخطاء البروكسي
+            if "ERR_TUNNEL_CONNECTION_FAILED" in error_msg or "ERR_PROXY_CONNECTION_FAILED" in error_msg:
+                proxy_info = f"\nالبروكسي الميت: `{selected_proxy}`" if selected_proxy else ""
+                custom_error = f"❌ **فشل الاتصال:** البروكسي المستخدم ميت أو لا يعمل.{proxy_info}"
+            else:
+                custom_error = f"❌ **فشل تقني:** حدث استثناء أثناء التنفيذ (`{error_msg}`)"
+
+            # محاولة التقاط صورة للخطأ إذا أمكن
+            try:
+                await page.screenshot(path=error_img)
+                photo = FSInputFile(error_img)
+                await bot.send_photo(
+                    chat_id, 
+                    photo, 
+                    caption=f"🎉 النتيجة النهائية للبطاقة {last_4}:\n\n{custom_error}",
+                    parse_mode="Markdown"
+                )
+            except:
+                # إذا فشل حتى التقاط الصورة (بسبب فشل الاتصال التام)
+                await bot.send_message(
+                    chat_id, 
+                    f"🎉 النتيجة النهائية للبطاقة {last_4}:\n\n{custom_error}",
+                    parse_mode="Markdown"
+                )
             
         finally:
             await browser.close()
@@ -207,7 +220,6 @@ async def queue_worker():
 
 @dp.message(Command("start"))
 async def send_welcome(message: Message):
-    # إنشاء زر إضافة البروكسيات
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ اضافة بروكسيات", callback_data="add_proxies")]
     ])
@@ -224,7 +236,6 @@ async def send_welcome(message: Message):
         reply_markup=kb
     )
 
-# معالجة الضغط على زر إضافة البروكسيات
 @dp.callback_query(F.data == "add_proxies")
 async def add_proxies_callback(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(
@@ -234,20 +245,16 @@ async def add_proxies_callback(callback: types.CallbackQuery, state: FSMContext)
         "`username:password@ip:port`", 
         parse_mode="Markdown"
     )
-    # إدخال البوت في حالة انتظار البروكسيات
     await state.set_state(BotStates.waiting_for_proxies)
     await callback.answer()
 
-# معالجة رسالة البروكسيات (تعمل فقط عندما يكون البوت في حالة الانتظار)
 @dp.message(BotStates.waiting_for_proxies)
 async def receive_proxies(message: Message, state: FSMContext):
     text = message.text.strip()
-    # تقسيم النص بناءً على المسافات أو الأسطر الجديدة
     raw_proxies = re.split(r'\s+', text)
     
     added_count = 0
     for rp in raw_proxies:
-        # التأكد المبدئي من أن النص يحتوي على التنسيق الصحيح
         if '@' in rp and ':' in rp:
             proxy_list.append(rp)
             added_count += 1
@@ -257,10 +264,8 @@ async def receive_proxies(message: Message, state: FSMContext):
     else:
         await message.reply("⚠️ لم يتم العثور على بروكسيات بالتنسيق الصحيح. تأكد من التنسيق وحاول مجدداً.")
         
-    # إخراج البوت من حالة الانتظار ليعود لاستقبال البطاقات
     await state.clear()
 
-# معالجة بيانات البطاقات (تعمل في الوضع الطبيعي)
 @dp.message()
 async def process_data(message: Message):
     lines = message.text.strip().split('\n')
@@ -310,7 +315,6 @@ async def process_data(message: Message):
     if added_count > 0:
         await message.reply(f"✅ تم بنجاح إضافة **{added_count}** بطاقة إلى الطابور.\nسيتم الفحص واحدة تلو الأخرى.", parse_mode="Markdown")
     else:
-        # رسالة الخطأ تظهر فقط إذا لم نكن في وضع إرسال البروكسيات
         await message.reply("⚠️ لم يتم العثور على بطاقات بتنسيق صحيح في رسالتك.")
 
 async def main():
