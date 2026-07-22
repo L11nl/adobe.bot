@@ -30,8 +30,9 @@ def generate_random_data():
     lname = random.choice(last_names)
     zip_code = random.choice(zip_codes)
     
-    random_chars = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
-    email = f"nabeel886ADOBEVV44{random_chars}@gmail.com"
+    # توليد إيميل يبدو طبيعياً جداً كالبشر لتجنب كشف النمط
+    random_nums = ''.join(random.choices(string.digits, k=4))
+    email = f"{fname.lower()}{lname.lower()}{random_nums}@gmail.com"
     
     return email, fname, lname, zip_code
 
@@ -58,16 +59,31 @@ async def automate_adobe_checkout(chat_id, data: dict):
                 proxy_settings["username"] = proxy_username
                 proxy_settings["password"] = proxy_password
 
+        # إضافة تعديلات لتغيير بصمة المتصفح
         browser = await p.chromium.launch(
             headless=True,
-            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+            args=[
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-dev-shm-usage',
+                '--disable-blink-features=AutomationControlled' # إخفاء أن المتصفح آلي
+            ]
         )
         
+        # تغيير الـ User-Agent ليبدو كمتصفح طبيعي تماماً
         context = await browser.new_context(
             viewport={'width': 1440, 'height': 900},
-            proxy=proxy_settings
+            proxy=proxy_settings,
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
+        
+        # حقن كود جافاسكريبت لتعطيل خاصية اكتشاف البوتات (Stealth Mode)
+        await page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+        """)
         
         screenshot_path = f"result_{chat_id}_{last_4}.png"
         error_img = f"error_{chat_id}_{last_4}.png"
@@ -76,7 +92,7 @@ async def automate_adobe_checkout(chat_id, data: dict):
             await page.goto(ADOBE_URL, wait_until="domcontentloaded", timeout=60000)
             await page.locator('input[type="email"]').wait_for(state="visible", timeout=30000)
 
-            await page.locator('input[type="email"]').type(data['email'], delay=100)
+            await page.locator('input[type="email"]').type(data['email'], delay=random.randint(50, 150)) # تأخير عشوائي كالبشر
             await page.locator('button:has-text("Continue")').click()
             
             async def smart_type(hints, value):
@@ -98,7 +114,7 @@ async def automate_adobe_checkout(chat_id, data: dict):
                                             await target.focus(timeout=1000)
                                             
                                         await target.fill("")
-                                        await target.type(value, delay=100)
+                                        await target.type(value, delay=random.randint(50, 150))
                                         return
                                     except:
                                         continue 
@@ -119,7 +135,6 @@ async def automate_adobe_checkout(chat_id, data: dict):
             
             await page.locator('button:has-text("Agree and subscribe")').click()
             
-            # التعديل هنا: الانتظار لمدة 20 ثانية (20000 ملي ثانية) بدل 6 ثواني ليأخذ البنك وقته
             await bot.send_message(chat_id, "🔄 جاري معالجة الدفع... (ننتظر رد البنك)")
             await page.wait_for_timeout(20000)
             
