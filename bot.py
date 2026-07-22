@@ -73,33 +73,42 @@ async def automate_adobe_checkout(chat_id, data: dict):
         try:
             await bot.send_message(chat_id, "🌐 جاري الاتصال ببوابة أدوبي...")
             
-            # التعديل الجديد: تحميل الـ DOM فقط والانتظار حتى يظهر حقل الإيميل لتجاوز مشكلة الانتظار
             await page.goto(ADOBE_URL, wait_until="domcontentloaded", timeout=60000)
             await page.locator('input[type="email"]').wait_for(state="visible", timeout=30000)
 
             # الخطوة 1: الإيميل
             await page.locator('input[type="email"]').type(data['email'], delay=100)
             await page.locator('button:has-text("Continue")').click()
-            await page.wait_for_timeout(5000)
-
-            # دالة لاقتحام الإطارات الأمنية (iframes)
+            
+            # ---------------------------------------------------------
+            # دالة قناصة صبورة للبحث داخل الصفحة وجميع الإطارات المتعددة
+            # ---------------------------------------------------------
             async def type_in_field(placeholder_text, name_attr, value):
-                direct_loc = page.locator(f'input[name="{name_attr}"], input[placeholder="{placeholder_text}" i]')
-                if await direct_loc.count() > 0:
-                    await direct_loc.first.type(value, delay=100)
-                    return
-
-                frames_count = await page.locator('iframe').count()
-                for i in range(frames_count):
-                    frame_loc = page.frame_locator('iframe').nth(i).locator(f'input[name="{name_attr}"], input[placeholder="{placeholder_text}" i]')
-                    if await frame_loc.count() > 0:
-                        await frame_loc.first.type(value, delay=100)
+                selector = f'input[name="{name_attr}"], input[placeholder="{placeholder_text}" i]'
+                
+                # المحاولة المتكررة لمدة 15 ثانية (فحص كل ثانية لتلافي بطء الإطارات)
+                for _ in range(15):
+                    # 1. فحص الصفحة الرئيسية
+                    if await page.locator(selector).count() > 0:
+                        await page.locator(selector).first.type(value, delay=100)
                         return
+                    
+                    # 2. فحص جميع الإطارات (frames) مهما كان عمقها
+                    for frame in page.frames:
+                        if await frame.locator(selector).count() > 0:
+                            await frame.locator(selector).first.type(value, delay=100)
+                            return
+                    
+                    # انتظار ثانية واحدة قبل الفحص من جديد
+                    await page.wait_for_timeout(1000)
                 
                 raise Exception(f"لم يتم العثور على الحقل: {placeholder_text}")
 
             # الخطوة 2: بيانات الدفع 
             await bot.send_message(chat_id, "💳 إدخال بيانات البطاقة...")
+            # إعطاء المتصفح مهلة أولية بسيطة قبل بدء القنص
+            await page.wait_for_timeout(3000)
+            
             await type_in_field("Card number", "cardNumber", data['card'])
             await type_in_field("MM/YY", "expirationDate", data['expiry'])
 
