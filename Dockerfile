@@ -1,4 +1,4 @@
-here# استخدام صورة رسمية من مايكروسوفت تحتوي على بايثون وكل متطلبات Playwright
+# استخدام صورة رسمية من مايكروسوفت تحتوي على بايثون وكل متطلبات Playwright
 FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
 
 # تحديد مسار العمل
