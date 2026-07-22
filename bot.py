@@ -3,9 +3,11 @@ import os
 import random
 import string
 import re
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import Message, FSInputFile
+from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from playwright.async_api import async_playwright
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -16,8 +18,13 @@ if not BOT_TOKEN:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# طابور المهام
+# طابور المهام وقائمة البروكسيات
 card_queue = asyncio.Queue()
+proxy_list = []
+
+# إعداد حالات البوت (FSM) لانتظار إدخال البروكسيات
+class BotStates(StatesGroup):
+    waiting_for_proxies = State()
 
 ADOBE_URL = "https://commerce.adobe.com/store/checkout?items%5B0%5D%5Bid%5D=D0440AB0F2F7F2F2CB39657F45BC5D56&items%5B0%5D%5Bq%5D=1&cli=creative&co=US&lang=en"
 
@@ -47,16 +54,29 @@ async def automate_adobe_checkout(chat_id, data: dict):
     )
     
     async with async_playwright() as p:
-        proxy_server = os.getenv("PROXY_SERVER")
-        proxy_username = os.getenv("PROXY_USERNAME")
-        proxy_password = os.getenv("PROXY_PASSWORD")
-        
         proxy_settings = None
-        if proxy_server:
-            proxy_settings = {"server": proxy_server}
-            if proxy_username and proxy_password:
-                proxy_settings["username"] = proxy_username
-                proxy_settings["password"] = proxy_password
+        
+        # استخدام البروكسيات المضافة من الزر إذا كانت متوفرة
+        if proxy_list:
+            selected_proxy = random.choice(proxy_list)
+            try:
+                # تقسيم البروكسي: username:password@ip:port
+                credentials, server_address = selected_proxy.split('@')
+                p_user, p_pass = credentials.split(':')
+                proxy_settings = {
+                    "server": f"http://{server_address}",
+                    "username": p_user,
+                    "password": p_pass
+                }
+            except Exception as e:
+                print(f"Error parsing proxy {selected_proxy}: {e}")
+        # خيار بديل: استخدام متغيرات Railway إذا لم يتم إضافة بروكسيات عبر الزر
+        elif os.getenv("PROXY_SERVER"):
+            proxy_settings = {
+                "server": os.getenv("PROXY_SERVER"),
+                "username": os.getenv("PROXY_USERNAME"),
+                "password": os.getenv("PROXY_PASSWORD")
+            }
 
         browser = await p.chromium.launch(
             headless=True,
@@ -134,10 +154,8 @@ async def automate_adobe_checkout(chat_id, data: dict):
             await bot.send_message(chat_id, "🔄 جاري معالجة الدفع واستخراج النتيجة...")
             await page.wait_for_timeout(20000)
             
-            # قراءة نص الصفحة لتحليل النتيجة بذكاء
             page_text = await page.evaluate("document.body.innerText")
             
-            # تحديد حالة النتيجة بناءً على النصوص الموجودة في الصفحة
             if "not eligible for a free trial" in page_text.lower():
                 status_result = "❌ **فشل:** غير مؤهل للتجربة المجانية (IP محظور أو تم كشف المحاولات)"
             elif "we couldn't process your payment" in page_text.lower():
@@ -150,7 +168,6 @@ async def automate_adobe_checkout(chat_id, data: dict):
             await page.screenshot(path=screenshot_path)
             photo = FSInputFile(screenshot_path)
             
-            # إرسال الصورة مع التنسيق المطلوب بالظبط
             await bot.send_photo(
                 chat_id, 
                 photo, 
@@ -190,6 +207,11 @@ async def queue_worker():
 
 @dp.message(Command("start"))
 async def send_welcome(message: Message):
+    # إنشاء زر إضافة البروكسيات
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ اضافة بروكسيات", callback_data="add_proxies")]
+    ])
+    
     await message.reply(
         "مرحباً بك.\n"
         "أرسل لي بيانات الدفع بأي تنسيق وسأقوم بفلترتها وفحصها.\n\n"
@@ -198,9 +220,47 @@ async def send_welcome(message: Message):
         "`4938 7506 7122 3872|0731`\n"
         "`4938750671223872|07|31|123`\n"
         "`4938750671223872|07/31|123`",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=kb
     )
 
+# معالجة الضغط على زر إضافة البروكسيات
+@dp.callback_query(F.data == "add_proxies")
+async def add_proxies_callback(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer(
+        "أرسل البروكسيات الآن.\n"
+        "يمكنك إرسال بروكسي واحد أو مجموعة مفصولة بمسافة أو في أسطر جديدة.\n\n"
+        "**التنسيق المطلوب:**\n"
+        "`username:password@ip:port`", 
+        parse_mode="Markdown"
+    )
+    # إدخال البوت في حالة انتظار البروكسيات
+    await state.set_state(BotStates.waiting_for_proxies)
+    await callback.answer()
+
+# معالجة رسالة البروكسيات (تعمل فقط عندما يكون البوت في حالة الانتظار)
+@dp.message(BotStates.waiting_for_proxies)
+async def receive_proxies(message: Message, state: FSMContext):
+    text = message.text.strip()
+    # تقسيم النص بناءً على المسافات أو الأسطر الجديدة
+    raw_proxies = re.split(r'\s+', text)
+    
+    added_count = 0
+    for rp in raw_proxies:
+        # التأكد المبدئي من أن النص يحتوي على التنسيق الصحيح
+        if '@' in rp and ':' in rp:
+            proxy_list.append(rp)
+            added_count += 1
+            
+    if added_count > 0:
+        await message.reply(f"✅ تم إضافة **{added_count}** بروكسيات بنجاح!\nإجمالي البروكسيات المتوفرة في البوت الآن: **{len(proxy_list)}**", parse_mode="Markdown")
+    else:
+        await message.reply("⚠️ لم يتم العثور على بروكسيات بالتنسيق الصحيح. تأكد من التنسيق وحاول مجدداً.")
+        
+    # إخراج البوت من حالة الانتظار ليعود لاستقبال البطاقات
+    await state.clear()
+
+# معالجة بيانات البطاقات (تعمل في الوضع الطبيعي)
 @dp.message()
 async def process_data(message: Message):
     lines = message.text.strip().split('\n')
@@ -250,6 +310,7 @@ async def process_data(message: Message):
     if added_count > 0:
         await message.reply(f"✅ تم بنجاح إضافة **{added_count}** بطاقة إلى الطابور.\nسيتم الفحص واحدة تلو الأخرى.", parse_mode="Markdown")
     else:
+        # رسالة الخطأ تظهر فقط إذا لم نكن في وضع إرسال البروكسيات
         await message.reply("⚠️ لم يتم العثور على بطاقات بتنسيق صحيح في رسالتك.")
 
 async def main():
