@@ -16,7 +16,7 @@ if not BOT_TOKEN:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# إنشاء طابور مهام عالمي
+# طابور المهام
 card_queue = asyncio.Queue()
 
 ADOBE_URL = "https://commerce.adobe.com/store/checkout?items%5B0%5D%5Bid%5D=D0440AB0F2F7F2F2CB39657F45BC5D56&items%5B0%5D%5Bq%5D=1&cli=creative&co=US&lang=en"
@@ -36,7 +36,6 @@ def generate_random_data():
     return email, fname, lname, zip_code
 
 async def automate_adobe_checkout(chat_id, data: dict):
-    # استخدام آخر 4 أرقام من البطاقة لتمييز الرسائل
     last_4 = data['card'][-4:]
     
     await bot.send_message(
@@ -77,11 +76,9 @@ async def automate_adobe_checkout(chat_id, data: dict):
             await page.goto(ADOBE_URL, wait_until="domcontentloaded", timeout=60000)
             await page.locator('input[type="email"]').wait_for(state="visible", timeout=30000)
 
-            # الخطوة 1: الإيميل
             await page.locator('input[type="email"]').type(data['email'], delay=100)
             await page.locator('button:has-text("Continue")').click()
             
-            # دالة قناصة متقدمة تبحث في كل الخصائص والإطارات
             async def smart_type(hints, value):
                 for _ in range(15):
                     frames_to_check = [page] + page.frames
@@ -108,13 +105,11 @@ async def automate_adobe_checkout(chat_id, data: dict):
                     await page.wait_for_timeout(1000)
                 raise Exception(f"لم يتم العثور على الحقل المرتبط بـ: {hints[0]}")
 
-            # الخطوة 2: بيانات الدفع 
             await page.wait_for_timeout(3000)
             
             await smart_type(["cardnumber", "card number", "ccnumber", "encryptedcard", "credit"], data['card'])
             await smart_type(["expiry", "expiration", "mm/yy", "date", "encryptedexpiry"], data['expiry'])
 
-            # الخطوة 3: البيانات الشخصية
             await smart_type(["first name", "firstname", "fname"], data['fname'])
             await smart_type(["last name", "lastname", "lname"], data['lname'])
             await smart_type(["zip", "postal", "postcode"], data['zip'])
@@ -122,14 +117,15 @@ async def automate_adobe_checkout(chat_id, data: dict):
             await page.mouse.wheel(0, 500)
             await page.wait_for_timeout(1000)
             
-            # الخطوة 4: تأكيد الاشتراك
             await page.locator('button:has-text("Agree and subscribe")').click()
             
-            await page.wait_for_timeout(6000)
+            # التعديل هنا: الانتظار لمدة 20 ثانية (20000 ملي ثانية) بدل 6 ثواني ليأخذ البنك وقته
+            await bot.send_message(chat_id, "🔄 جاري معالجة الدفع... (ننتظر رد البنك)")
+            await page.wait_for_timeout(20000)
             
             await page.screenshot(path=screenshot_path)
             photo = FSInputFile(screenshot_path)
-            await bot.send_photo(chat_id, photo, caption=f"🎉 **النتيجة للبطاقة {last_4}:**", parse_mode="Markdown")
+            await bot.send_photo(chat_id, photo, caption=f"🎉 **النتيجة النهائية للبطاقة {last_4}:**", parse_mode="Markdown")
             
         except Exception as e:
             await page.screenshot(path=error_img)
@@ -150,7 +146,6 @@ async def automate_adobe_checkout(chat_id, data: dict):
             if os.path.exists(error_img):
                 os.remove(error_img)
 
-# عامل الخلفية (Worker) الذي يسحب البطاقات من الطابور ويعالجها بالترتيب
 async def queue_worker():
     while True:
         chat_id, user_data = await card_queue.get()
@@ -159,7 +154,6 @@ async def queue_worker():
         except Exception as e:
             print(f"Error processing card: {e}")
         finally:
-            # إعلام الطابور بانتهاء المهمة وإعطاء فترة راحة 3 ثواني قبل البطاقة التالية
             card_queue.task_done()
             await asyncio.sleep(3)
 
@@ -189,28 +183,22 @@ async def process_data(message: Message):
         if len(parts) < 2:
             continue
             
-        # استخراج الأرقام فقط من الجزء الأول (رقم البطاقة)
         card_clean = re.sub(r'\D', '', parts[0])
-        
-        # استخراج التاريخ بذكاء
         part2 = re.sub(r'\D', '', parts[1])
         
         if len(part2) == 4:
-            # تنسيق 0731
             expiry_clean = part2
         elif len(part2) == 2 and len(parts) >= 3:
-            # تنسيق 07|31|CVV
             part3 = re.sub(r'\D', '', parts[2])
-            if len(part3) == 4: # سنة كاملة مثل 2031
+            if len(part3) == 4: 
                 expiry_clean = part2 + part3[-2:]
-            elif len(part3) == 2: # سنة مختصرة مثل 31
+            elif len(part3) == 2: 
                 expiry_clean = part2 + part3
             else:
-                expiry_clean = part2 # احتياطي
+                expiry_clean = part2 
         else:
             expiry_clean = part2
             
-        # التأكد من صحة طول البطاقة والتاريخ قبل الإضافة
         if len(card_clean) < 13 or len(expiry_clean) < 4:
             continue
             
@@ -219,13 +207,12 @@ async def process_data(message: Message):
         user_data = {
             'email': rand_email,
             'card': card_clean,
-            'expiry': expiry_clean[:4], # التأكد من أخذ 4 أرقام فقط (شهر وسنة)
+            'expiry': expiry_clean[:4],
             'fname': rand_fname,
             'lname': rand_lname,
             'zip': rand_zip
         }
         
-        # إضافة البطاقة للطابور
         await card_queue.put((message.chat.id, user_data))
         added_count += 1
         
@@ -236,7 +223,6 @@ async def process_data(message: Message):
 
 async def main():
     print("Bot is starting...")
-    # تشغيل عامل الطابور في الخلفية
     asyncio.create_task(queue_worker())
     await dp.start_polling(bot)
 
