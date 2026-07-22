@@ -2,7 +2,7 @@ import asyncio
 import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, FSInputFile
 from playwright.async_api import async_playwright
 
 # سحب التوكن من إعدادات Railway
@@ -14,28 +14,41 @@ if not BOT_TOKEN:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# رابط أدوبي
 ADOBE_URL = "https://commerce.adobe.com/store/checkout?items%5B0%5D%5Bid%5D=D0440AB0F2F7F2F2CB39657F45BC5D56&items%5B0%5D%5Bq%5D=1&cli=creative&co=US&lang=en"
 
 async def automate_adobe_checkout(chat_id, data: dict):
     await bot.send_message(chat_id, "⏳ جاري فتح المتصفح على الخادم السحابي...")
     
     async with async_playwright() as p:
-        # إعدادات البروكسي (أزل علامة # من الأسطر أدناه عند شراء بروكسي منزلي)
-        # proxy_settings = {
-        #     "server": "http://IP:PORT",
-        #     "username": "YOUR_USERNAME",
-        #     "password": "YOUR_PASSWORD"
-        # }
+        # سحب بيانات البروكسي من متغيرات Railway
+        proxy_server = os.getenv("PROXY_SERVER")
+        proxy_username = os.getenv("PROXY_USERNAME")
+        proxy_password = os.getenv("PROXY_PASSWORD")
+        
+        proxy_settings = None
+        if proxy_server:
+            proxy_settings = {
+                "server": proxy_server
+            }
+            if proxy_username and proxy_password:
+                proxy_settings["username"] = proxy_username
+                proxy_settings["password"] = proxy_password
 
+        # تشغيل المتصفح مع تعطيل الحماية المعزولة ليتوافق مع Railway
         browser = await p.chromium.launch(
             headless=True,
             args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
         )
         
-        # إذا قمت بتفعيل البروكسي، أضف السطر التالي داخل new_context:
-        # proxy=proxy_settings
-        context = await browser.new_context(viewport={'width': 1440, 'height': 900})
+        # إعداد بيئة المتصفح وربط البروكسي (إن وجد)
+        context = await browser.new_context(
+            viewport={'width': 1440, 'height': 900},
+            proxy=proxy_settings
+        )
         page = await context.new_page()
+        
+        screenshot_path = f"result_{chat_id}.png"
         
         try:
             await bot.send_message(chat_id, "🌐 جاري الاتصال ببوابة أدوبي...")
@@ -58,7 +71,7 @@ async def automate_adobe_checkout(chat_id, data: dict):
             await page.locator('input[name="lastName"]').type(data['lname'], delay=100)
             await page.locator('input[name="zip"]').type(data['zip'], delay=100)
 
-            # التمرير (Scrolling)
+            # التمرير (Scrolling) لكي يبدو كبشر
             await page.mouse.wheel(0, 500)
             await page.wait_for_timeout(500)
             
@@ -69,11 +82,8 @@ async def automate_adobe_checkout(chat_id, data: dict):
             # انتظار 5 ثواني لمعرفة النتيجة
             await page.wait_for_timeout(5000)
             
-            # أخذ لقطة شاشة للنتيجة النهائية وإرسالها لك
-            screenshot_path = "result.png"
+            # أخذ لقطة شاشة للنتيجة وإرسالها
             await page.screenshot(path=screenshot_path)
-            
-            from aiogram.types import FSInputFile
             photo = FSInputFile(screenshot_path)
             await bot.send_photo(chat_id, photo, caption="🎉 انتهت العملية. هذه لقطة للشاشة الحالية:")
             
@@ -82,9 +92,9 @@ async def automate_adobe_checkout(chat_id, data: dict):
             
         finally:
             await browser.close()
-            # مسح الصورة بعد الإرسال لتنظيف الخادم
-            if os.path.exists("result.png"):
-                os.remove("result.png")
+            # تنظيف ملف الصورة من الخادم بعد الإرسال
+            if os.path.exists(screenshot_path):
+                os.remove(screenshot_path)
 
 @dp.message(Command("start"))
 async def send_welcome(message: Message):
