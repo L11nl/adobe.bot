@@ -1,2 +1,2 @@
-Enteraiogram==3.3.0
+aiogram==3.3.0
 playwright==1.44.0
