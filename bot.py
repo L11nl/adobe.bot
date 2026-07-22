@@ -1,6 +1,6 @@
 import asyncio
 import os
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message, FSInputFile
 from playwright.async_api import async_playwright
@@ -28,9 +28,7 @@ async def automate_adobe_checkout(chat_id, data: dict):
         
         proxy_settings = None
         if proxy_server:
-            proxy_settings = {
-                "server": proxy_server
-            }
+            proxy_settings = {"server": proxy_server}
             if proxy_username and proxy_password:
                 proxy_settings["username"] = proxy_username
                 proxy_settings["password"] = proxy_password
@@ -49,6 +47,7 @@ async def automate_adobe_checkout(chat_id, data: dict):
         page = await context.new_page()
         
         screenshot_path = f"result_{chat_id}.png"
+        error_img = f"error_{chat_id}.png"
         
         try:
             await bot.send_message(chat_id, "🌐 جاري الاتصال ببوابة أدوبي...")
@@ -58,7 +57,7 @@ async def automate_adobe_checkout(chat_id, data: dict):
             await bot.send_message(chat_id, f"⌨️ إدخال الإيميل: {data['email']}")
             await page.locator('input[type="email"]').type(data['email'], delay=100)
             await page.locator('button:has-text("Continue")').click()
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(4000) # زيادة وقت الانتظار قليلاً لتحميل صفحة الدفع
 
             # الخطوة 2: الدفع
             await bot.send_message(chat_id, "💳 إدخال بيانات الدفع...")
@@ -88,13 +87,25 @@ async def automate_adobe_checkout(chat_id, data: dict):
             await bot.send_photo(chat_id, photo, caption="🎉 انتهت العملية. هذه لقطة للشاشة الحالية:")
             
         except Exception as e:
-            await bot.send_message(chat_id, f"❌ حدث خطأ أثناء التنفيذ: {str(e)}")
+            # التقاط صورة للشاشة فور حدوث الخطأ لمعرفة السبب
+            await page.screenshot(path=error_img)
+            photo = FSInputFile(error_img)
+            error_msg = str(e).split('\n')[0] # أخذ أول سطر من الخطأ فقط لتخفيف النص
+            
+            await bot.send_photo(
+                chat_id, 
+                photo, 
+                caption=f"❌ توقف البوت هنا ولم يجد الحقل!\n\nتفاصيل الخطأ:\n`{error_msg}`",
+                parse_mode="Markdown"
+            )
             
         finally:
             await browser.close()
-            # تنظيف ملف الصورة من الخادم بعد الإرسال
+            # تنظيف ملفات الصور من الخادم بعد الإرسال
             if os.path.exists(screenshot_path):
                 os.remove(screenshot_path)
+            if os.path.exists(error_img):
+                os.remove(error_img)
 
 @dp.message(Command("start"))
 async def send_welcome(message: Message):
@@ -114,8 +125,8 @@ async def process_data(message: Message):
         
     user_data = {
         'email': parts[0].strip(),
-        'card': parts[1].strip(),
-        'expiry': parts[2].strip(),
+        'card': parts[1].strip().replace(" ", ""), # إزالة المسافات من البطاقة إن وجدت
+        'expiry': parts[2].strip().replace("/", ""), # إزالة السلاش من التاريخ إن وجد
         'fname': parts[3].strip(),
         'lname': parts[4].strip(),
         'zip': parts[5].strip()
