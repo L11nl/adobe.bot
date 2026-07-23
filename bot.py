@@ -125,37 +125,42 @@ async def automate_capcut_login(chat_id, email, password):
             if await all_inputs.count() > 0:
                 await all_inputs.last.fill(password)
 
-        await page.wait_for_timeout(1000)
+        await page.wait_for_timeout(1500)
 
-        # 5. النقر على Sign in
-        sign_in_btn = page.locator('button:has-text("Sign in")')
-        if await sign_in_btn.count() > 0:
+        # 5. النقر على زر "Sign in" بدقة عالية
+        await bot.send_message(chat_id, "✅ جاري النقر على زر Sign in...")
+        
+        sign_in_clicked = False
+        for _ in range(5):
             try:
-                await sign_in_btn.first.click(timeout=3000)
+                sign_in_btn = page.locator('button:has-text("Sign in"), div:has-text("Sign in")').first
+                if await sign_in_btn.is_visible():
+                    await sign_in_btn.click(timeout=3000)
+                    sign_in_clicked = True
+                    break
             except:
-                await page.keyboard.press("Enter")
-        else:
+                pass
+            await page.wait_for_timeout(1000)
+
+        if not sign_in_clicked:
             await page.keyboard.press("Enter")
 
         # انتظار تحميل لوحة التحكم الرئيسية بالكامل
-        await bot.send_message(chat_id, "🔄 جاري الدخول إلى لوحة التحكم والبحث عن زر Upgrade...")
-        await page.wait_for_timeout(7000)
+        await bot.send_message(chat_id, "🔄 جاري الانتقال إلى لوحة التحكم...")
+        await page.wait_for_timeout(8000)
 
-        # 6. النقر الذكي عبر الجافاسكريبت لإيجاد والضغط على زر Upgrade بأمان تام
+        # 6. النقر الذكي والمحسن على زر Upgrade
+        await bot.send_message(chat_id, "✨ جاري البحث عن زر Upgrade والنقر عليه...")
         clicked_upgrade = await page.evaluate("""
             () => {
-                // البحث في جميع العناصر التي تحتوي على النص Upgrade
-                const elements = Array.from(document.querySelectorAll('*'));
-                const target = elements.find(el => el.textContent && el.textContent.trim() === 'Upgrade' && el.children.length === 0);
-                if (target) {
-                    target.click();
-                    return true;
-                }
-                // طريقة بديلة بالبحث عن الأزرار والروائع
-                const buttons = Array.from(document.querySelectorAll('button, a, div, span'));
-                const btn = buttons.find(b => b.innerText && b.innerText.trim() === 'Upgrade');
-                if (btn) {
-                    btn.click();
+                // البحث في جميع العناصر التي تحتوي على كلمة Upgrade
+                const allElements = Array.from(document.querySelectorAll('a, button, div, span'));
+                const upgradeEl = allElements.find(el => {
+                    const text = el.textContent ? el.textContent.trim() : '';
+                    return text.toLowerCase() === 'upgrade';
+                });
+                if (upgradeEl) {
+                    upgradeEl.click();
                     return true;
                 }
                 return false;
@@ -163,7 +168,7 @@ async def automate_capcut_login(chat_id, email, password):
         """)
 
         if clicked_upgrade:
-            await bot.send_message(chat_id, "✨ تم النقر على زر Upgrade بنجاح تام!")
+            await bot.send_message(chat_id, "🎉 تم النقر على زر Upgrade بنجاح تام!")
         else:
             await bot.send_message(chat_id, "⚠️ ملاحظة: لم يتم الضغط تلقائياً، يمكنك الضغط عليه يدوياً أو استخدام زر تحديث الشاشة.")
 
@@ -298,7 +303,7 @@ async def add_proxies_callback(callback: types.CallbackQuery, state: FSMContext)
 @dp.callback_query(F.data == "stop_proxies")
 async def stop_proxies_callback(callback: types.CallbackQuery, state: FSMContext):
     global proxy_enabled
-    proxy_enabled = False
+    proxy_enabled, proxy_list = False, []
     await callback.message.answer("🛑 **تم إيقاف البروكسيات بنجاح.**", parse_mode="Markdown")
     await callback.answer()
 
