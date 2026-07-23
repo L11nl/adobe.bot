@@ -91,7 +91,6 @@ async def automate_capcut_login(chat_id, email, password):
         await page.wait_for_timeout(3000)
         
         # 1. النقر على Continue with email
-        await bot.send_message(chat_id, "🖱️ جاري النقر على خيار الإيميل...")
         email_btn = page.locator('text="Continue with email"')
         if await email_btn.count() > 0:
             await email_btn.first.click()
@@ -101,7 +100,6 @@ async def automate_capcut_login(chat_id, email, password):
         await page.wait_for_timeout(2000)
 
         # 2. إدخال الإيميل
-        await bot.send_message(chat_id, "⌨️ جاري إدخال البريد الإلكتروني...")
         email_input = page.locator('input[type="text"], input[type="email"]')
         await email_input.wait_for(state="visible", timeout=10000)
         await email_input.first.fill("")
@@ -109,35 +107,28 @@ async def automate_capcut_login(chat_id, email, password):
         
         await page.wait_for_timeout(1000)
 
-        # 3. النقر على زر Continue
-        await bot.send_message(chat_id, "➡️ النقر على متابعة للانتقال لكلمة المرور...")
+        # 3. النقر على Continue
         continue_btn = page.locator('button:has-text("Continue")')
         if await continue_btn.count() > 0:
             await continue_btn.first.click()
         
         await page.wait_for_timeout(3500)
 
-        # 4. معالجة شاشة كلمة المرور الجديدة (Welcome back) وإدخال الباسورد
-        await bot.send_message(chat_id, "🔑 جاري رصد شاشة كلمة المرور وتعبئتها...")
+        # 4. تعبئة كلمة المرور في شاشة Welcome back
         password_input = page.locator('input[type="password"]')
-        
-        # انتظار ظهور حقل الباسورد في شاشة Welcome back
         try:
             await password_input.wait_for(state="visible", timeout=10000)
             await password_input.first.fill("")
             await password_input.first.type(password, delay=random.randint(50, 150))
         except:
-            # محاولة بديلة إذا اختلف المحدد
             all_inputs = page.locator('input')
             if await all_inputs.count() > 0:
                 await all_inputs.last.fill(password)
 
         await page.wait_for_timeout(1000)
 
-        # 5. النقر المباشر على زر "Sign in" كما يظهر في صورتك الجديدة
-        await bot.send_message(chat_id, "✅ جاري النقر على زر Sign in...")
+        # 5. النقر على Sign in
         sign_in_btn = page.locator('button:has-text("Sign in")')
-        
         if await sign_in_btn.count() > 0:
             try:
                 await sign_in_btn.first.click(timeout=3000)
@@ -146,19 +137,28 @@ async def automate_capcut_login(chat_id, email, password):
         else:
             await page.keyboard.press("Enter")
 
-        await page.wait_for_timeout(6000)
+        # انتظار تحميل لوحة التحكم الرئيسية بالكامل
+        await bot.send_message(chat_id, "🔄 جاري الدخول إلى لوحة التحكم والبحث عن زر Upgrade...")
+        await page.wait_for_timeout(7000)
 
-        # 6. الانتقال إلى لوحة التحكم والبحث عن زر Upgrade والضغط عليه
-        await bot.send_message(chat_id, "🔍 جاري الانتقال إلى لوحة التحكم والضغط على زر Upgrade...")
-        try:
-            upgrade_btn = page.locator('button:has-text("Upgrade"), a:has-text("Upgrade")')
-            if await upgrade_btn.count() > 0:
-                await upgrade_btn.first.click(timeout=5000)
-                await bot.send_message(chat_id, "✨ تم النقر على زر Upgrade بنجاح!")
-        except Exception as ex:
-            print(f"Upgrade click error: {ex}")
+        # 6. دالة ذكية للبحث والضغط على زر Upgrade حتى لو تأخر ظهوره
+        clicked_upgrade = False
+        for _ in range(10): # محاولة لمدة 10 ثوانٍ
+            try:
+                upgrade_btn = page.locator('button:has-text("Upgrade"), a:has-text("Upgrade")').first
+                if await upgrade_btn.is_visible():
+                    await upgrade_btn.click()
+                    clicked_upgrade = True
+                    await bot.send_message(chat_id, "✨ تم النقر على زر Upgrade بنجاح!")
+                    break
+            except:
+                pass
+            await page.wait_for_timeout(1000)
 
-        await page.wait_for_timeout(4000)
+        if not clicked_upgrade:
+            await bot.send_message(chat_id, "⚠️ ملاحظة: لم يتم العثور على زر Upgrade تلقائياً، يمكنك الضغط عليه يدوياً أو تحديث الشاشة.")
+
+        await page.wait_for_timeout(3000)
 
         # التقاط الشاشة النهائية وإرسالها مع أزرار التحكم
         await page.screenshot(path=screenshot_path)
@@ -250,7 +250,6 @@ async def send_welcome(message: Message):
         reply_markup=kb
     )
 
-# تفاعل زر تسجيل الدخول
 @dp.callback_query(F.data == "capcut_login")
 async def capcut_login_callback(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(
