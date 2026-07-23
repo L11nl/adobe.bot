@@ -10,11 +10,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from playwright.async_api import async_playwright
 
-BOT_TOKEN = os.getenv("PROXY_SERVER") # سيبقى على التوكن الصحيح من الـ env
-if not os.getenv("BOT_TOKEN"):
-    raise ValueError("⚠️ التوكن غير موجود!")
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    raise ValueError("⚠️ التوكن غير موجود! تأكد من إضافته في إعدادات Variables في Railway.")
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -23,19 +23,15 @@ proxy_enabled = True
 active_sessions = {}
 
 class BotStates(StatesGroup):
-    waiting_for_email = State()
     waiting_for_login_credentials = State()
     waiting_for_proxies = State()
 
 CAPCUT_LOGIN_URL = "https://www.capcut.com/login?redirect_url=https%3A%2F%2Fwww.capcut.com%2Fmy-edit"
-DEFAULT_PASSWORD = "00CHAT700z00"
 
-async def automate_capcut_action(chat_id, action_type, email, password=DEFAULT_PASSWORD):
-    is_signup = action_type == 'signup'
-    
+async def automate_capcut_login(chat_id, email, password):
     await bot.send_message(
         chat_id, 
-        f"🚀 **بدء جلسة {'إنشاء حساب' if is_signup else 'تسجيل الدخول'} CapCut...**\n"
+        f"🚀 **بدء جلسة تسجيل الدخول لـ CapCut...**\n"
         f"📧 الإيميل: `{email}`",
         parse_mode="Markdown"
     )
@@ -95,6 +91,7 @@ async def automate_capcut_action(chat_id, action_type, email, password=DEFAULT_P
         await page.wait_for_timeout(3000)
         
         # 1. النقر على Continue with email
+        await bot.send_message(chat_id, "🖱️ جاري النقر على خيار الإيميل...")
         email_btn = page.locator('text="Continue with email"')
         if await email_btn.count() > 0:
             await email_btn.first.click()
@@ -104,6 +101,7 @@ async def automate_capcut_action(chat_id, action_type, email, password=DEFAULT_P
         await page.wait_for_timeout(2000)
 
         # 2. إدخال الإيميل
+        await bot.send_message(chat_id, "⌨️ جاري إدخال البريد الإلكتروني...")
         email_input = page.locator('input[type="text"], input[type="email"]')
         await email_input.wait_for(state="visible", timeout=10000)
         await email_input.first.fill("")
@@ -111,77 +109,58 @@ async def automate_capcut_action(chat_id, action_type, email, password=DEFAULT_P
         
         await page.wait_for_timeout(1000)
 
-        # 3. النقر على Continue
+        # 3. النقر على زر Continue
+        await bot.send_message(chat_id, "➡️ النقر على متابعة للانتقال لكلمة المرور...")
         continue_btn = page.locator('button:has-text("Continue")')
         if await continue_btn.count() > 0:
             await continue_btn.first.click()
         
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(3500)
 
-        # 4. إدخال كلمة المرور
+        # 4. معالجة شاشة كلمة المرور الجديدة (Welcome back) وإدخال الباسورد
+        await bot.send_message(chat_id, "🔑 جاري رصد شاشة كلمة المرور وتعبئتها...")
         password_input = page.locator('input[type="password"]')
-        await password_input.wait_for(state="visible", timeout=10000)
-        await password_input.first.fill("")
-        await password_input.first.type(password, delay=random.randint(50, 150))
+        
+        # انتظار ظهور حقل الباسورد في شاشة Welcome back
+        try:
+            await password_input.wait_for(state="visible", timeout=10000)
+            await password_input.first.fill("")
+            await password_input.first.type(password, delay=random.randint(50, 150))
+        except:
+            # محاولة بديلة إذا اختلف المحدد
+            all_inputs = page.locator('input')
+            if await all_inputs.count() > 0:
+                await all_inputs.last.fill(password)
 
         await page.wait_for_timeout(1000)
 
-        # 5. النقر على Sign in / Register / Continue
-        sign_btn = page.locator('button').filter(has_text=re.compile("Sign in|Sign up|Register|Continue", re.IGNORECASE))
-        if await sign_btn.count() > 0:
+        # 5. النقر المباشر على زر "Sign in" كما يظهر في صورتك الجديدة
+        await bot.send_message(chat_id, "✅ جاري النقر على زر Sign in...")
+        sign_in_btn = page.locator('button:has-text("Sign in")')
+        
+        if await sign_in_btn.count() > 0:
             try:
-                await sign_btn.first.click(timeout=3000)
+                await sign_in_btn.first.click(timeout=3000)
             except:
                 await page.keyboard.press("Enter")
         else:
             await page.keyboard.press("Enter")
 
-        await page.wait_for_timeout(5000)
+        await page.wait_for_timeout(6000)
 
-        # ---------------------------------------------------------
-        # معالجة شاشة تاريخ الميلاد (لإنشاء الحساب الجديد)
-        # ---------------------------------------------------------
-        if is_signup and await page.locator('text="When\'s your birthday?"').count() > 0:
-            await bot.send_message(chat_id, "🎂 تم رصد شاشة تاريخ الميلاد، جاري الاختيار العشوائي (سنة بين 1990 و 2005)...")
-            
-            rand_year = str(random.randint(1990, 2005))
-            
-            try:
-                # محاولة التعامل مع حقل السنة المنسدل أو النصي
-                year_box = page.locator('input').first
-                if await year_box.count() > 0:
-                    await year_box.click()
-                    await year_box.fill(rand_year)
-                    await page.keyboard.press("Enter")
-                
-                await page.wait_for_timeout(1500)
-                
-                # النقر على زر Continue الخاص بتاريخ الميلاد
-                birth_continue = page.locator('button:has-text("Continue")')
-                if await birth_continue.count() > 0:
-                    await birth_continue.first.click()
-                    await page.wait_for_timeout(4000)
-            except Exception as ex:
-                print(f"Birthday handler notice: {ex}")
-
-        # ---------------------------------------------------------
-        # الانتقال إلى لوحة التحكم والضغط على Upgrade تلقائياً
-        # ---------------------------------------------------------
-        await bot.send_message(chat_id, "🔍 جاري الانتقال إلى لوحة التحكم والبحث عن زر Upgrade...")
+        # 6. الانتقال إلى لوحة التحكم والبحث عن زر Upgrade والضغط عليه
+        await bot.send_message(chat_id, "🔍 جاري الانتقال إلى لوحة التحكم والضغط على زر Upgrade...")
         try:
-            # الانتظار حتى يظهر زر Upgrade في لوحة التحكم
             upgrade_btn = page.locator('button:has-text("Upgrade"), a:has-text("Upgrade")')
             if await upgrade_btn.count() > 0:
                 await upgrade_btn.first.click(timeout=5000)
                 await bot.send_message(chat_id, "✨ تم النقر على زر Upgrade بنجاح!")
-            else:
-                print("Upgrade button not immediately found.")
         except Exception as ex:
             print(f"Upgrade click error: {ex}")
 
         await page.wait_for_timeout(4000)
 
-        # التقاط الشاشة وإرسالها مع أزرار التحكم
+        # التقاط الشاشة النهائية وإرسالها مع أزرار التحكم
         await page.screenshot(path=screenshot_path)
         photo = FSInputFile(screenshot_path)
         
@@ -193,7 +172,7 @@ async def automate_capcut_action(chat_id, action_type, email, password=DEFAULT_P
         await bot.send_photo(
             chat_id, 
             photo, 
-            caption=f"📌 **حالة الجلسة الحالية لـ CapCut:**\nالإيميل: `{email}`\n\nاختر من الأزرار أدناه للمتابعة:",
+            caption=f"📌 **حالة جلسة تسجيل الدخول لـ CapCut:**\nالإيميل: `{email}`\n\nاختر من الأزرار أدناه للمتابعة:",
             parse_mode="Markdown",
             reply_markup=control_kb
         )
@@ -206,6 +185,7 @@ async def automate_capcut_action(chat_id, action_type, email, password=DEFAULT_P
             await p.stop()
             del active_sessions[chat_id]
 
+# زر تحديث الشاشة
 @dp.callback_query(F.data == "refresh_screen")
 async def refresh_screen_callback(callback: types.CallbackQuery):
     chat_id = callback.message.chat.id
@@ -235,6 +215,7 @@ async def refresh_screen_callback(callback: types.CallbackQuery):
     except Exception as e:
         await callback.answer(f"فشل التحديث: {str(e)}", show_alert=True)
 
+# زر إنهاء العملية
 @dp.callback_query(F.data == "finish_session")
 async def finish_session_callback(callback: types.CallbackQuery):
     chat_id = callback.message.chat.id
@@ -254,7 +235,6 @@ async def finish_session_callback(callback: types.CallbackQuery):
 @dp.message(Command("start"))
 async def send_welcome(message: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👤 إنشاء حساب CapCut", callback_data="ask_email_signup")],
         [InlineKeyboardButton(text="🔐 تسجيل دخول (إيميل مخصص)", callback_data="capcut_login")],
         [InlineKeyboardButton(text="➕ اضافة بروكسيات", callback_data="add_proxies"),
          InlineKeyboardButton(text="🛑 إيقاف البروكسيات", callback_data="stop_proxies")]
@@ -263,33 +243,14 @@ async def send_welcome(message: Message):
     status_text = "🟢 **البروكسيات:** مفعلة" if proxy_enabled and proxy_list else "🔴 **البروكسيات:** متوقفة (اتصال محلي)"
     
     await message.reply(
-        f"مرحباً بك في بوت أتمتة **CapCut**.\n"
+        f"مرحباً بك في بوت أتمتة تسجيل الدخول لـ **CapCut**.\n"
         f"{status_text}\n\n"
         "اختر أحد الخيارات أدناه:",
         parse_mode="Markdown",
         reply_markup=kb
     )
 
-@dp.callback_query(F.data == "ask_email_signup")
-async def ask_email_signup(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer(
-        "أرسل البريد الإلكتروني الذي تريد إنشاء الحساب به:\n"
-        f"*(ملاحظة: سيتم استخدام كلمة المرور التلقائية `{DEFAULT_PASSWORD}`)*",
-        parse_mode="Markdown"
-    )
-    await state.set_state(BotStates.waiting_for_email)
-    await callback.answer()
-
-@dp.message(BotStates.waiting_for_email)
-async def receive_email_for_signup(message: Message, state: FSMContext):
-    email = message.text.strip()
-    if "@" not in email or "." not in email:
-        await message.reply("⚠️ الإيميل غير صحيح. يرجى إرسال إيميل صالح:")
-        return
-        
-    await state.clear()
-    asyncio.create_task(automate_capcut_action(message.chat.id, 'signup', email, DEFAULT_PASSWORD))
-
+# تفاعل زر تسجيل الدخول
 @dp.callback_query(F.data == "capcut_login")
 async def capcut_login_callback(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(
@@ -313,7 +274,7 @@ async def receive_login_credentials(message: Message, state: FSMContext):
     password = parts[1].strip()
     
     await state.clear()
-    asyncio.create_task(automate_capcut_action(message.chat.id, 'login', email, password))
+    asyncio.create_task(automate_capcut_login(message.chat.id, email, password))
 
 @dp.callback_query(F.data == "add_proxies")
 async def add_proxies_callback(callback: types.CallbackQuery, state: FSMContext):
@@ -352,7 +313,7 @@ async def receive_proxies(message: Message, state: FSMContext):
     await state.clear()
 
 async def main():
-    print("CapCut Bot is starting...")
+    print("CapCut Login Bot is starting...")
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
