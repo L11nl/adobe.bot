@@ -19,37 +19,46 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # طابور المهام وقائمة البروكسيات
-card_queue = asyncio.Queue()
+task_queue = asyncio.Queue()
 proxy_list = []
-proxy_enabled = True # مفتاح تفعيل أو إيقاف البروكسيات
+proxy_enabled = True
 
+# حالات البوت (FSM) لاستقبال بيانات تسجيل الدخول أو البروكسيات
 class BotStates(StatesGroup):
     waiting_for_proxies = State()
+    waiting_for_login_credentials = State()
 
-ADOBE_URL = "https://commerce.adobe.com/store/checkout?items%5B0%5D%5Bid%5D=D0440AB0F2F7F2F2CB39657F45BC5D56&items%5B0%5D%5Bq%5D=1&cli=creative&co=US&lang=en"
+CAPCUT_LOGIN_URL = "https://www.capcut.com/login?redirect_url=https%3A%2F%2Fwww.capcut.com%2Fmy-edit"
 
-def generate_random_data():
-    first_names = ["James", "John", "Robert", "Michael", "William", "David", "Richard", "Joseph", "Thomas", "Charles", "Mary", "Patricia", "Jennifer", "Linda", "Elizabeth", "Barbara", "Susan", "Jessica", "Sarah", "Karen"]
-    last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin"]
-    zip_codes = ["10001", "90210", "60601", "73301", "33101", "94105", "98101", "02108", "30301", "75201"]
+def generate_random_capcut_data():
+    first_names = ["James", "John", "Robert", "Michael", "William", "David", "Richard", "Joseph", "Thomas", "Charles", "Mark", "Daniel", "Paul", "Steven", "Andrew"]
+    last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez", "Taylor", "Moore", "Jackson", "Martin", "Lee"]
     
     fname = random.choice(first_names)
     lname = random.choice(last_names)
-    zip_code = random.choice(zip_codes)
     
     random_nums = ''.join(random.choices(string.digits, k=4))
     email = f"{fname.lower()}{lname.lower()}{random_nums}@gmail.com"
     
-    return email, fname, lname, zip_code
-
-async def automate_adobe_checkout(chat_id, data: dict):
-    last_4 = data['card'][-4:]
+    # كلمة مرور قوية تتوافق مع متطلبات كاب كات
+    password = "00CHAT" + ''.join(random.choices(string.ascii_letters + string.digits, k=6)) + "00"
     
+    return email, password
+
+async def automate_capcut_action(chat_id, action_type, data: dict):
+    """
+    action_type: 'signup' أو 'login'
+    data: يحتوي على {'email': ..., 'password': ...}
+    """
+    is_signup = action_type == 'signup'
+    email = data['email']
+    password = data['password']
+    
+    title_msg = "🚀 جاري إنشاء حساب جديد في CapCut..." if is_signup else "🔐 جاري تسجيل الدخول إلى CapCut..."
     await bot.send_message(
         chat_id, 
-        f"⏳ **جاري فحص البطاقة تنتهي بـ {last_4}**\n"
-        f"📧 الإيميل: `{data['email']}`\n"
-        f"👤 الاسم: {data['fname']} {data['lname']}",
+        f"{title_msg}\n"
+        f"📧 الإيميل: `{email}`",
         parse_mode="Markdown"
     )
     
@@ -57,7 +66,6 @@ async def automate_adobe_checkout(chat_id, data: dict):
         proxy_settings = None
         selected_proxy = None
         
-        # استخدام البروكسيات فقط إذا كانت مفعلة وتم إضافة بروكسيات
         if proxy_enabled and proxy_list:
             selected_proxy = random.choice(proxy_list)
             try:
@@ -94,69 +102,73 @@ async def automate_adobe_checkout(chat_id, data: dict):
             });
         """)
         
-        screenshot_path = f"result_{chat_id}_{last_4}.png"
-        error_img = f"error_{chat_id}_{last_4}.png"
+        screenshot_path = f"capcut_result_{chat_id}.png"
+        error_img = f"capcut_error_{chat_id}.png"
         
         try:
-            await page.goto(ADOBE_URL, wait_until="domcontentloaded", timeout=60000)
-            await page.locator('input[type="email"]').wait_for(state="visible", timeout=30000)
-
-            await page.locator('input[type="email"]').type(data['email'], delay=random.randint(50, 150))
-            await page.locator('button:has-text("Continue")').click()
+            await page.goto(CAPCUT_LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
             
-            async def smart_type(hints, value):
-                for _ in range(15):
-                    frames_to_check = [page] + page.frames
-                    for f in frames_to_check:
-                        for hint in hints:
-                            selector = f'input[name*="{hint}" i], input[placeholder*="{hint}" i], input[aria-label*="{hint}" i], input[id*="{hint}" i], input[data-fieldtype*="{hint}" i]'
-                            loc = f.locator(selector)
-                            count = await loc.count()
-                            
-                            for i in range(count):
-                                target = loc.nth(i)
-                                if await target.is_visible():
-                                    try:
-                                        try:
-                                            await target.click(timeout=1000)
-                                        except:
-                                            await target.focus(timeout=1000)
-                                            
-                                        await target.fill("")
-                                        await target.type(value, delay=random.randint(50, 150))
-                                        return
-                                    except:
-                                        continue 
-                    await page.wait_for_timeout(1000)
-                raise Exception(f"لم يتم العثور على الحقل المرتبط بـ: {hints[0]}")
-
+            # الخطوة 1: النقر على "Continue with email" بناءً على التقرير الدقيق
             await page.wait_for_timeout(3000)
             
-            await smart_type(["cardnumber", "card number", "ccnumber", "encryptedcard", "credit"], data['card'])
-            await smart_type(["expiry", "expiration", "mm/yy", "date", "encryptedexpiry"], data['expiry'])
-
-            await smart_type(["first name", "firstname", "fname"], data['fname'])
-            await smart_type(["last name", "lastname", "lname"], data['lname'])
-            await smart_type(["zip", "postal", "postcode"], data['zip'])
-
-            await page.mouse.wheel(0, 500)
-            await page.wait_for_timeout(1000)
-            
-            await page.locator('button:has-text("Agree and subscribe")').click()
-            
-            await bot.send_message(chat_id, "🔄 جاري معالجة الدفع واستخراج النتيجة...")
-            await page.wait_for_timeout(20000)
-            
-            page_text = await page.evaluate("document.body.innerText")
-            
-            if "not eligible for a free trial" in page_text.lower():
-                status_result = "❌ **فشل:** غير مؤهل للتجربة المجانية (IP محظور أو تم كشف المحاولات)"
-            elif "we couldn't process your payment" in page_text.lower():
-                status_result = "❌ **فشل:** رفض البنك أو بوابة الدفع البطاقة (Card Declined / Dead)"
-            elif "thank you" in page_text.lower() or "manage your account" in page_text.lower() or "order confirmation" in page_text.lower():
-                status_result = "✅ **نجاح باهر!** تم قبول البطاقة واشتراك الحساب بنجاح!"
+            # البحث عن زر البريد الإلكتروني والنقر عليه
+            email_btn = page.locator('text="Continue with email"')
+            if await email_btn.count() > 0:
+                await email_btn.first.click()
             else:
-                status_result = "⚠️ **نتيجة غير جزمية:** يرجى فحص لقطة الشاشة أدناه لمعرفة التفاصيل."
+                # محاولة بديلة بالنقر عبر الإحداثيات الموثوقة أو محددات أخرى
+                await page.locator('button, div').filter(has_text=re.compile("email", re.IGNORECASE)).first.click()
+                
+            await page.wait_for_timeout(2000)
+
+            # الخطوة 2: إدخال الإيميل
+            # بناءً على خطوات التقرير، حقل الإيميل يظهر بعد النقر
+            email_input = page.locator('input[type="text"], input[type="email"]')
+            await email_input.wait_for(state="visible", timeout=10000)
+            await email_input.first.fill("")
+            await email_input.first.type(email, delay=random.randint(50, 150))
+            
+            await page.wait_for_timeout(1000)
+
+            # الخطوة 3: النقر على زر Continue
+            continue_btn = page.locator('button:has-text("Continue")')
+            if await continue_btn.count() > 0:
+                await continue_btn.first.click()
+            
+            await page.wait_for_timeout(3000)
+
+            # الخطوة 4: إدخال كلمة المرور
+            password_input = page.locator('input[type="password"]')
+            await password_input.wait_for(state="visible", timeout=10000)
+            await password_input.first.fill("")
+            await password_input.first.type(password, delay=random.randint(50, 150))
+
+            await page.wait_for_timeout(1000)
+
+            # الخطوة 5: النقر على زر Sign in / Register
+            sign_in_btn = page.locator('button:has-text("Sign in"), button:has-text("Sign up"), button:has-text("Register")')
+            if await sign_in_btn.count() > 0:
+                await sign_in_btn.first.click()
+            else:
+                # ضغط زر الإرسال الافتراضي
+                await page.keyboard.press("Enter")
+
+            # انتظار حتى يتم تسجيل الدخول وتحول الرابط إلى لوحة التحكم my-edit
+            await bot.send_message(chat_id, "🔄 جاري التحقق وإنهاء الجلسة...")
+            
+            try:
+                await page.wait_for_url("**/my-edit**", timeout=25000)
+            except:
+                # إذا لم يتغير الرابط بالكامل، ننتظر قليلاً لنلتقط الشاشة ونرى النتيجة
+                await page.wait_for_timeout(8000)
+
+            page_url = page.url
+            page_text = await page.evaluate("document.body.innerText")
+
+            if "my-edit" in page_url or "invite members" in page_text.lower() or "upgrade space" in page_text.lower():
+                status_result = f"✅ **تم بنجاح!** تم {'إنشاء الحساب' if is_signup else 'تسجيل الدخول'} والدخول إلى لوحة التحكم.\n🔑 كلمة المرور المستخدمة: `{password}`"
+            else:
+                status_result = "⚠️ **انتبه:** قد تتطلب العملية تأكيد رمز تحقق (OTP) أو كابتشا يدوية. يرجى مراجعة الصورة أدناه."
 
             await page.screenshot(path=screenshot_path)
             photo = FSInputFile(screenshot_path)
@@ -164,7 +176,7 @@ async def automate_adobe_checkout(chat_id, data: dict):
             await bot.send_photo(
                 chat_id, 
                 photo, 
-                caption=f"🎉 النتيجة النهائية للبطاقة {last_4}:\n\n{status_result}",
+                caption=f"🎉 النتيجة النهائية لـ CapCut:\n\n{status_result}",
                 parse_mode="Markdown"
             )
             
@@ -172,8 +184,7 @@ async def automate_adobe_checkout(chat_id, data: dict):
             error_msg = str(e).split('\n')[0] 
             
             if "ERR_TUNNEL_CONNECTION_FAILED" in error_msg or "ERR_PROXY_CONNECTION_FAILED" in error_msg:
-                proxy_info = f"\nالبروكسي الميت: `{selected_proxy}`" if selected_proxy else ""
-                custom_error = f"❌ **فشل الاتصال:** البروكسي المستخدم ميت أو لا يعمل.{proxy_info}"
+                custom_error = f"❌ **فشل الاتصال:** البروكسي المستخدم ميت أو لا يعمل."
             else:
                 custom_error = f"❌ **فشل تقني:** حدث استثناء أثناء التنفيذ (`{error_msg}`)"
 
@@ -183,13 +194,13 @@ async def automate_adobe_checkout(chat_id, data: dict):
                 await bot.send_photo(
                     chat_id, 
                     photo, 
-                    caption=f"🎉 النتيجة النهائية للبطاقة {last_4}:\n\n{custom_error}",
-                    parse_Mode="Markdown"
+                    caption=f"🎉 النتيجة النهائية لـ CapCut:\n\n{custom_error}",
+                    parse_mode="Markdown"
                 )
             except:
                 await bot.send_message(
                     chat_id, 
-                    f"🎉 النتيجة النهائية للبطاقة {last_4}:\n\n{custom_error}",
+                    f"🎉 النتيجة النهائية لـ CapCut:\n\n{custom_error}",
                     parse_mode="Markdown"
                 )
             
@@ -202,36 +213,74 @@ async def automate_adobe_checkout(chat_id, data: dict):
 
 async def queue_worker():
     while True:
-        chat_id, user_data = await card_queue.get()
+        chat_id, action_type, data = await task_queue.get()
         try:
-            await automate_adobe_checkout(chat_id, user_data)
+            await automate_capcut_action(chat_id, action_type, data)
         except Exception as e:
-            print(f"Error processing card: {e}")
+            print(f"Error processing task: {e}")
         finally:
-            card_queue.task_done()
+            task_queue.task_done()
             await asyncio.sleep(3)
 
 @dp.message(Command("start"))
 async def send_welcome(message: Message):
-    # إنشاء الأزرار التفاعلية
+    # لوحة تحكم أزرار تفاعلية متقدمة جداً
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ اضافة بروكسيات", callback_data="add_proxies")],
-        [InlineKeyboardButton(text="🛑 إيقاف البروكسيات", callback_data="stop_proxies")]
+        [InlineKeyboardButton(text="👤 إنشاء حساب CapCut عشوائي", callback_data="capcut_signup")],
+        [InlineKeyboardButton(text="🔐 تسجيل دخول (إيميل مخصص)", callback_data="capcut_login")],
+        [InlineKeyboardButton(text="➕ اضافة بروكسيات", callback_data="add_proxies"),
+         InlineKeyboardButton(text="🛑 إيقاف البروكسيات", callback_data="stop_proxies")]
     ])
     
     status_text = "🟢 **البروكسيات:** مفعلة" if proxy_enabled and proxy_list else "🔴 **البروكسيات:** متوقفة (اتصال محلي)"
     
     await message.reply(
-        f"مرحباً بك.\n"
+        f"مرحباً بك في بوت أتمتة **CapCut** الذكي.\n"
         f"{status_text}\n\n"
-        "أرسل لي بيانات الدفع بأي تنسيق وسأقوم بفلترتها وفحصها.\n\n"
-        "يمكنك إرسال بطاقة واحدة، أو مجموعة بطاقات (كل بطاقة في سطر).\n\n"
-        "أمثلة مدعومة:\n"
-        "`4938 7506 7122 3872|0731`\n"
-        "`4938750671223872|07|31|123`",
+        "اختر أحد الأوامر أدناه من الأزرار التفاعلية:",
         parse_mode="Markdown",
         reply_markup=kb
     )
+
+# تفاعل زر إنشاء حساب عشوائي
+@dp.callback_query(F.data == "capcut_signup")
+async def capcut_signup_callback(callback: types.CallbackQuery):
+    email, password = generate_random_capcut_data()
+    data = {'email': email, 'password': password}
+    
+    await task_queue.put((callback.message.chat.id, 'signup', data))
+    await callback.message.answer("✅ تمت إضافة مهمة **إنشاء حساب كاب كات** إلى الطابور بنجاح!", parse_mode="Markdown")
+    await callback.answer()
+
+# تفاعل زر تسجيل الدخول
+@dp.callback_query(F.data == "capcut_login")
+async def capcut_login_callback(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer(
+        "أرسل بيانات تسجيل الدخول بهذا التنسيق (في سطر واحد):\n\n"
+        "`email@gmail.com|password`",
+        parse_mode="Markdown"
+    )
+    await state.set_state(BotStates.waiting_for_login_credentials)
+    await callback.answer()
+
+# استقبال بيانات تسجيل الدخول المخصصة
+@dp.message(BotStates.waiting_for_login_credentials)
+async def receive_login_credentials(message: Message, state: FSMContext):
+    text = message.text.strip()
+    parts = text.split('|')
+    
+    if len(parts) != 2:
+        await message.reply("⚠️ التنسيق خاطئ. الرجاء الإرسال بهذا الشكل: `email@gmail.com|password`", parse_mode="Markdown")
+        return
+        
+    email = parts[0].strip()
+    password = parts[1].strip()
+    
+    data = {'email': email, 'password': password}
+    await task_queue.put((message.chat.id, 'login', data))
+    
+    await message.reply("✅ تم استلام بيانات تسجيل الدخول وإضافتها للطابور بنجاح!", parse_mode="Markdown")
+    await state.clear()
 
 @dp.callback_query(F.data == "add_proxies")
 async def add_proxies_callback(callback: types.CallbackQuery, state: FSMContext):
@@ -246,12 +295,11 @@ async def add_proxies_callback(callback: types.CallbackQuery, state: FSMContext)
     await state.set_state(BotStates.waiting_for_proxies)
     await callback.answer()
 
-# زر إيقاف البروكسيات
 @dp.callback_query(F.data == "stop_proxies")
 async def stop_proxies_callback(callback: types.CallbackQuery, state: FSMContext):
     global proxy_enabled
     proxy_enabled = False
-    await callback.message.answer("🛑 **تم إيقاف البروكسيات بنجاح.**\nسيعمل البوت الآن محلياً عبر خادم الرايتواي مباشرة.", parse_mode="Markdown")
+    await callback.message.answer("🛑 **تم إيقاف البروكسيات بنجاح.**\nسيعمل البوت محلياً.", parse_mode="Markdown")
     await callback.answer()
 
 @dp.message(BotStates.waiting_for_proxies)
@@ -266,65 +314,14 @@ async def receive_proxies(message: Message, state: FSMContext):
             added_count += 1
             
     if added_count > 0:
-        await message.reply(f"✅ تم إضافة **{added_count}** بروكسيات بنجاح وتم تفعيلها!\nإجمالي البروكسيات المتوفرة: **{len(proxy_list)}**", parse_mode="Markdown")
+        await message.reply(f"✅ تم إضافة **{added_count}** بروكسيات بنجاح وتم تفعيلها!\nإجمالي البروكسيات: **{len(proxy_list)}**", parse_mode="Markdown")
     else:
-        await message.reply("⚠️ لم يتم العثور على بروكسيات بالتنسيق الصحيح. تأكد من التنسيق وحاول مجدداً.")
+        await message.reply("⚠️ لم يتم العثور على بروكسيات بالتنسيق الصحيح.")
         
     await state.clear()
 
-@dp.message()
-async def process_data(message: Message):
-    lines = message.text.strip().split('\n')
-    added_count = 0
-    
-    for line in lines:
-        if not line.strip(): 
-            continue
-            
-        parts = line.split('|')
-        if len(parts) < 2:
-            continue
-            
-        card_clean = re.sub(r'\D', '', parts[0])
-        part2 = re.sub(r'\D', '', parts[1])
-        
-        if len(part2) == 4:
-            expiry_clean = part2
-        elif len(part2) == 2 and len(parts) >= 3:
-            part3 = re.sub(r'\D', '', parts[2])
-            if len(part3) == 4: 
-                expiry_clean = part2 + part3[-2:]
-            elif len(part3) == 2: 
-                expiry_clean = part2 + part3
-            else:
-                expiry_clean = part2 
-        else:
-            expiry_clean = part2
-            
-        if len(card_clean) < 13 or len(expiry_clean) < 4:
-            continue
-            
-        rand_email, rand_fname, rand_lname, rand_zip = generate_random_data()
-        
-        user_data = {
-            'email': rand_email,
-            'card': card_clean,
-            'expiry': expiry_clean[:4],
-            'fname': rand_fname,
-            'lname': rand_lname,
-            'zip': rand_zip
-        }
-        
-        await card_queue.put((message.chat.id, user_data))
-        added_count += 1
-        
-    if added_count > 0:
-        await message.reply(f"✅ تم بنجاح إضافة **{added_count}** بطاقة إلى الطابور.\nسيتم الفحص واحدة تلو الأخرى.", parse_mode="Markdown")
-    else:
-        await message.reply("⚠️ لم يتم العثور على بطاقات بتنسيق صحيح في رسالتك.")
-
 async def main():
-    print("Bot is starting...")
+    print("CapCut Bot is starting...")
     asyncio.create_task(queue_worker())
     await dp.start_polling(bot)
 
