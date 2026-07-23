@@ -127,65 +127,57 @@ async def automate_capcut_login(chat_id, email, password):
 
         await page.wait_for_timeout(1500)
 
-        # 5. النقر الدقيق والمستمر على زر "Sign in" (بناءً على السجل الناجح)
-        await bot.send_message(chat_id, "✅ جاري النقر على زر Sign in...")
+        # 5. النقر الإجباري والفعلي على زر "Sign in" لضمان تجاوز الصفحة
+        await bot.send_message(chat_id, "✅ جاري النقر الإجباري على زر Sign in...")
         
-        sign_in_clicked = False
-        for _ in range(5):
-            try:
-                sign_in_btn = page.locator('button:has-text("Sign in"), text="Sign in"').first
-                if await sign_in_btn.is_visible():
-                    await sign_in_btn.click(timeout=3000)
-                    sign_in_clicked = True
-                    break
-            except:
-                pass
-            await page.keyboard.press("Enter")
-            await page.wait_for_timeout(1000)
+        try:
+            sign_in_btn = page.locator('button:has-text("Sign in")').first
+            await sign_in_btn.click(force=True, timeout=5000)
+        except Exception as e:
+            print(f"Playwright click failed, executing JS click: {e}")
+            
+        # طريقة إضافية عبر جافاسكريبت لضمان تفعيل حدث النقر
+        await page.evaluate("""
+            () => {
+                const buttons = Array.from(document.querySelectorAll('button'));
+                const btn = buttons.find(b => b.textContent && b.textContent.trim() === 'Sign in');
+                if (btn) {
+                    btn.click();
+                }
+            }
+        """)
 
         # 6. الانتظار حتى يتم تحميل لوحة التحكم الرئيسية (my-edit) تماماً
         await bot.send_message(chat_id, "🔄 جاري الانتظار لحين الانتقال إلى لوحة التحكم الرئيسية...")
         try:
-            await page.wait_for_url("**/my-edit**", timeout=15000)
+            await page.wait_for_url("**/my-edit**", timeout=20000)
         except:
-            await page.wait_for_timeout(5000)
+            await page.wait_for_timeout(6000)
 
         await bot.send_message(chat_id, "✨ جاري البحث عن زر Upgrade والنقر عليه...")
         
-        # 7. البحث الذكي والنقر على Upgrade أو Upgrade space (مثل الخطوات 19-21 في سجلك)
-        clicked_upgrade = False
-        for _ in range(5):
-            try:
-                upgrade_el = page.locator('text="Upgrade", text="Upgrade space", button:has-text("Upgrade")').first
-                if await upgrade_el.is_visible():
-                    await upgrade_el.click(timeout=3000)
-                    clicked_upgrade = True
-                    break
-            except:
-                pass
-            
-            # محاولة عبر الجافاسكريبت الاحتياطي
-            clicked_upgrade = await page.evaluate("""
-                () => {
-                    const els = Array.from(document.querySelectorAll('button, a, div, span'));
-                    const target = els.find(el => {
-                        const t = el.textContent ? el.textContent.trim().toLowerCase() : '';
-                        return t === 'upgrade' || t === 'upgrade space';
-                    });
-                    if (target) { target.click(); return true; }
-                    return false;
+        # 7. البحث الذكي والنقر على Upgrade
+        clicked_upgrade = await page.evaluate("""
+            () => {
+                const els = Array.from(document.querySelectorAll('a, button, div, span'));
+                const target = els.find(el => {
+                    const t = el.textContent ? el.textContent.trim().toLowerCase() : '';
+                    return t === 'upgrade' || t === 'upgrade space';
+                });
+                if (target) {
+                    target.click();
+                    return true;
                 }
-            """)
-            if clicked_upgrade:
-                break
-            await page.wait_for_timeout(2000)
+                return false;
+            }
+        """)
 
         if clicked_upgrade:
             await bot.send_message(chat_id, "🎉 تم بنجاح النقر على زر Upgrade والانتقال لصفحة الترقية!")
         else:
-            await bot.send_message(chat_id, "⚠️ ملاحظة: تم تسجيل الدخول بنجاح، يمكنك الضغط على Upgrade يدوياً أو استخدام زر تحديث الشاشة أدناه.")
+            await bot.send_message(chat_id, "⚠️ ملاحظة: تم تسجيل الدخول، يمكنك الضغط على Upgrade يدوياً أو استخدام زر تحديث الشاشة أدناه.")
 
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(4000)
 
         # التقاط الشاشة النهائية وإرسالها مع أزرار التحكم
         await page.screenshot(path=screenshot_path)
