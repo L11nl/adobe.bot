@@ -141,24 +141,33 @@ async def automate_capcut_login(chat_id, email, password):
         await bot.send_message(chat_id, "🔄 جاري الدخول إلى لوحة التحكم والبحث عن زر Upgrade...")
         await page.wait_for_timeout(7000)
 
-        # 6. دالة ذكية للبحث والضغط على زر Upgrade حتى لو تأخر ظهوره
-        clicked_upgrade = False
-        for _ in range(10): # محاولة لمدة 10 ثوانٍ
-            try:
-                upgrade_btn = page.locator('button:has-text("Upgrade"), a:has-text("Upgrade")').first
-                if await upgrade_btn.is_visible():
-                    await upgrade_btn.click()
-                    clicked_upgrade = True
-                    await bot.send_message(chat_id, "✨ تم النقر على زر Upgrade بنجاح!")
-                    break
-            except:
-                pass
-            await page.wait_for_timeout(1000)
+        # 6. النقر الذكي عبر الجافاسكريبت لإيجاد والضغط على زر Upgrade بأمان تام
+        clicked_upgrade = await page.evaluate("""
+            () => {
+                // البحث في جميع العناصر التي تحتوي على النص Upgrade
+                const elements = Array.from(document.querySelectorAll('*'));
+                const target = elements.find(el => el.textContent && el.textContent.trim() === 'Upgrade' && el.children.length === 0);
+                if (target) {
+                    target.click();
+                    return true;
+                }
+                // طريقة بديلة بالبحث عن الأزرار والروائع
+                const buttons = Array.from(document.querySelectorAll('button, a, div, span'));
+                const btn = buttons.find(b => b.innerText && b.innerText.trim() === 'Upgrade');
+                if (btn) {
+                    btn.click();
+                    return true;
+                }
+                return false;
+            }
+        """)
 
-        if not clicked_upgrade:
-            await bot.send_message(chat_id, "⚠️ ملاحظة: لم يتم العثور على زر Upgrade تلقائياً، يمكنك الضغط عليه يدوياً أو تحديث الشاشة.")
+        if clicked_upgrade:
+            await bot.send_message(chat_id, "✨ تم النقر على زر Upgrade بنجاح تام!")
+        else:
+            await bot.send_message(chat_id, "⚠️ ملاحظة: لم يتم الضغط تلقائياً، يمكنك الضغط عليه يدوياً أو استخدام زر تحديث الشاشة.")
 
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(4000)
 
         # التقاط الشاشة النهائية وإرسالها مع أزرار التحكم
         await page.screenshot(path=screenshot_path)
