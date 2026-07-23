@@ -163,14 +163,43 @@ async def automate_capcut_login(chat_id, email, password):
         except:
             await page.keyboard.press("Enter")
 
-        # 6. الانتظار حتى يتم تحميل لوحة التحكم الرئيسية
+        await page.wait_for_timeout(5000)
+
+        # ---------------------------------------------------------
+        # 6. فحص ذكي: هل ظهرت شاشة تاريخ الميلاد (When's your birthday?)؟
+        # ---------------------------------------------------------
+        birthday_header = page.locator('text="When\'s your birthday?"')
+        if await birthday_header.count() > 0 and await birthday_header.first.is_visible():
+            await bot.send_message(chat_id, "🎂 تم رصد شاشة تاريخ الميلاد، جاري التعبئة التلقائية...")
+            
+            rand_year = str(random.randint(1990, 2005))
+            
+            try:
+                # إدخال السنة في الحقل المخصص
+                year_input = page.locator('input[placeholder*="Year" i], input[type="text"]').first
+                if await year_input.count() > 0:
+                    await year_input.click()
+                    await year_input.fill(rand_year)
+                    await page.keyboard.press("Enter")
+                
+                await page.wait_for_timeout(1500)
+                
+                # النقر على زر Continue لتاريخ الميلاد
+                birth_continue = page.locator('button:has-text("Continue")')
+                if await birth_continue.count() > 0:
+                    await birth_continue.first.click()
+                    await page.wait_for_timeout(4000)
+            except Exception as ex:
+                print(f"Birthday filling exception: {ex}")
+
+        # 7. الانتظار حتى يتم تحميل لوحة التحكم الرئيسية (my-edit)
         await bot.send_message(chat_id, "🔄 جاري الانتقال إلى لوحة التحكم...")
         try:
             await page.wait_for_url("**/my-edit**", timeout=20000)
         except:
             await page.wait_for_timeout(6000)
 
-        # 7. النقر على زر Upgrade تلقائياً
+        # 8. النقر على زر Upgrade تلقائياً
         await bot.send_message(chat_id, "✨ جاري النقر على زر Upgrade...")
         await page.evaluate("""
             () => {
@@ -264,7 +293,6 @@ async def handle_grid_click(message: Message, state: FSMContext):
         reply_markup=control_kb
     )
 
-# زر تحديث الشاشة (عادية بدون شبكة)
 @dp.callback_query(F.data == "refresh_screen")
 async def refresh_screen_callback(callback: types.CallbackQuery):
     chat_id = callback.message.chat.id
@@ -295,7 +323,6 @@ async def refresh_screen_callback(callback: types.CallbackQuery):
     except Exception as e:
         await callback.answer(f"فشل التحديث: {str(e)}", show_alert=True)
 
-# زر عرض شبكة الماوس المرقمة (عند الطلب فقط)
 @dp.callback_query(F.data == "show_grid")
 async def show_grid_callback(callback: types.CallbackQuery):
     chat_id = callback.message.chat.id
@@ -330,7 +357,6 @@ async def show_grid_callback(callback: types.CallbackQuery):
     except Exception as e:
         await callback.answer(f"فشل عرض الشبكة: {str(e)}", show_alert=True)
 
-# زر إنهاء العملية
 @dp.callback_query(F.data == "finish_session")
 async def finish_session_callback(callback: types.CallbackQuery):
     chat_id = callback.message.chat.id
@@ -436,7 +462,7 @@ async def receive_proxies(message: Message, state: FSMContext):
     await state.clear()
 
 async def main():
-    print("CapCut Clean Bot is starting...")
+    print("CapCut Bot with Auto Birthday Handler is starting...")
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
