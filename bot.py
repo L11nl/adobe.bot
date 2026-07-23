@@ -127,52 +127,65 @@ async def automate_capcut_login(chat_id, email, password):
 
         await page.wait_for_timeout(1500)
 
-        # 5. النقر على زر "Sign in" بدقة عالية
+        # 5. النقر الدقيق والمستمر على زر "Sign in" (بناءً على السجل الناجح)
         await bot.send_message(chat_id, "✅ جاري النقر على زر Sign in...")
         
         sign_in_clicked = False
         for _ in range(5):
             try:
-                sign_in_btn = page.locator('button:has-text("Sign in"), div:has-text("Sign in")').first
+                sign_in_btn = page.locator('button:has-text("Sign in"), text="Sign in"').first
                 if await sign_in_btn.is_visible():
                     await sign_in_btn.click(timeout=3000)
                     sign_in_clicked = True
                     break
             except:
                 pass
+            await page.keyboard.press("Enter")
             await page.wait_for_timeout(1000)
 
-        if not sign_in_clicked:
-            await page.keyboard.press("Enter")
+        # 6. الانتظار حتى يتم تحميل لوحة التحكم الرئيسية (my-edit) تماماً
+        await bot.send_message(chat_id, "🔄 جاري الانتظار لحين الانتقال إلى لوحة التحكم الرئيسية...")
+        try:
+            await page.wait_for_url("**/my-edit**", timeout=15000)
+        except:
+            await page.wait_for_timeout(5000)
 
-        # انتظار تحميل لوحة التحكم الرئيسية بالكامل
-        await bot.send_message(chat_id, "🔄 جاري الانتقال إلى لوحة التحكم...")
-        await page.wait_for_timeout(8000)
-
-        # 6. النقر الذكي والمحسن على زر Upgrade
         await bot.send_message(chat_id, "✨ جاري البحث عن زر Upgrade والنقر عليه...")
-        clicked_upgrade = await page.evaluate("""
-            () => {
-                // البحث في جميع العناصر التي تحتوي على كلمة Upgrade
-                const allElements = Array.from(document.querySelectorAll('a, button, div, span'));
-                const upgradeEl = allElements.find(el => {
-                    const text = el.textContent ? el.textContent.trim() : '';
-                    return text.toLowerCase() === 'upgrade';
-                });
-                if (upgradeEl) {
-                    upgradeEl.click();
-                    return true;
+        
+        # 7. البحث الذكي والنقر على Upgrade أو Upgrade space (مثل الخطوات 19-21 في سجلك)
+        clicked_upgrade = False
+        for _ in range(5):
+            try:
+                upgrade_el = page.locator('text="Upgrade", text="Upgrade space", button:has-text("Upgrade")').first
+                if await upgrade_el.is_visible():
+                    await upgrade_el.click(timeout=3000)
+                    clicked_upgrade = True
+                    break
+            except:
+                pass
+            
+            # محاولة عبر الجافاسكريبت الاحتياطي
+            clicked_upgrade = await page.evaluate("""
+                () => {
+                    const els = Array.from(document.querySelectorAll('button, a, div, span'));
+                    const target = els.find(el => {
+                        const t = el.textContent ? el.textContent.trim().toLowerCase() : '';
+                        return t === 'upgrade' || t === 'upgrade space';
+                    });
+                    if (target) { target.click(); return true; }
+                    return false;
                 }
-                return false;
-            }
-        """)
+            """)
+            if clicked_upgrade:
+                break
+            await page.wait_for_timeout(2000)
 
         if clicked_upgrade:
-            await bot.send_message(chat_id, "🎉 تم النقر على زر Upgrade بنجاح تام!")
+            await bot.send_message(chat_id, "🎉 تم بنجاح النقر على زر Upgrade والانتقال لصفحة الترقية!")
         else:
-            await bot.send_message(chat_id, "⚠️ ملاحظة: لم يتم الضغط تلقائياً، يمكنك الضغط عليه يدوياً أو استخدام زر تحديث الشاشة.")
+            await bot.send_message(chat_id, "⚠️ ملاحظة: تم تسجيل الدخول بنجاح، يمكنك الضغط على Upgrade يدوياً أو استخدام زر تحديث الشاشة أدناه.")
 
-        await page.wait_for_timeout(4000)
+        await page.wait_for_timeout(3000)
 
         # التقاط الشاشة النهائية وإرسالها مع أزرار التحكم
         await page.screenshot(path=screenshot_path)
